@@ -33,14 +33,14 @@ log.addHandler(logging.NullHandler())
 
 
 class LakeShore336(SCPIUnknownMixin, Instrument):
-    """ Represents the Lake Shore 331 Temperature Controller and provides
+    """ Represents the Lake Shore 336 Temperature Controller and provides
     a high-level interface for interacting with the instrument. Note that the
-    331 provides two input channels (A and B) and two output channels (1 and 2).
+    336 provides four input channels (A B C and D) and four output channels (1 2 3 and 4).
     This driver makes use of the :ref:`LakeShoreChannels`.
 
     .. code-block:: python
 
-        controller = LakeShore331("GPIB::1")
+        controller = LakeShore336("GPIB::1")
 
         print(controller.output_1.setpoint)         # Print the current setpoint for loop 1
         controller.output_1.setpoint = 50           # Change the loop 1 setpoint to 50 K
@@ -54,9 +54,15 @@ class LakeShore336(SCPIUnknownMixin, Instrument):
 
     input_C = Instrument.ChannelCreator(LakeShoreTemperatureChannel, 'C')
 
+    input_D = Instrument.ChannelCreator(LakeShoreTemperatureChannel, 'D')
+
     output_1 = Instrument.ChannelCreator(LakeShoreHeaterChannel, 1)
 
     output_2 = Instrument.ChannelCreator(LakeShoreHeaterChannel, 2)
+
+    output_3 = Instrument.ChannelCreator(LakeShoreHeaterChannel, 3)
+
+    output_4 = Instrument.ChannelCreator(LakeShoreHeaterChannel, 4)
 
     def __init__(self, adapter, name="Lakeshore Model 336 Temperature Controller", **kwargs):
         kwargs.setdefault('read_termination', "\r\n")
