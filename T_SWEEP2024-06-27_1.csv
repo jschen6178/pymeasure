@@ -1,0 +1,11 @@
+#Procedure: <__main__.CryoProcedure>
+#Parameters:
+#	Maximum temperature: 10 K
+#	Minimum temperature: 8 K
+#	Number of power line cycles aka. measurement accurac (0.1/1/10): 1
+#	Amperage of heater: 2 A
+#	Temperature ramp rate: 0.5 K/min
+#	Resistance Range: 200000 Ohm
+#	Time per measurement: 0.1 s
+#Data:
+Temperature (K),Resistance (ohm)

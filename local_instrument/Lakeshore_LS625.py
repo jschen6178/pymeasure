@@ -1,98 +1,118 @@
 from pymeasure.instruments import Instrument
-from pymeasure.instruments.validators import strict_range
+from pymeasure.adapters import VISAAdapter
 
-class LakeShore625(Instrument):
-    def __init__(self, resourceName, **kwargs):
+
+class ElectromagnetPowerSupply(Instrument):
+    """Class representing a Lake Shore Model 643 or 648 electromagnet power supply."""
+
+    def __init__(self, resource_name, **kwargs):
         super().__init__(
-            resourceName,
-            "Lake Shore 625 Magnet Power Supply",
-            **kwargs
+            VISAAdapter(resource_name),
+            "Lake Shore Electromagnet Power Supply",
+            **kwargs,
         )
 
-    @property
-    def id(self):
-        """ Returns the instrument identification string """
-        return self.ask("*IDN?")
+    def set_magnetic_field(self, field_strength):
+        """Sets the magnetic field strength.
 
-    @property
-    def output_current(self):
-        """ Gets the output current in mA """
-        return self.ask("IOUT?")
+        Args:
+            field_strength (float): Desired magnetic field strength in the appropriate units (e.g., Tesla).
+        """
+        self.write(f"SETF {field_strength}")
 
-    @output_current.setter
-    def output_current(self, value):
-        """ Sets the output current in mA """
-        value = strict_range(value, [-60000, 60000])  # ±60 A in mA
-        self.write(f"IOUT {value:.1f}")
+    def measured_magnetic_field(self):
+        """Gets the current magnetic field strength.
 
-    @property
-    def output_voltage(self):
-        """ Gets the output voltage in mV """
-        return self.ask("VOUT?")
+        Returns:
+            float: Current magnetic field strength in the appropriate units (e.g., Tesla).
+        """
+        return float(self.ask("RDGF?"))
 
-    @output_voltage.setter
-    def output_voltage(self, value):
-        """ Sets the output voltage in mV """
-        value = strict_range(value, [100, 5000])  # 0.1 V to 5 V in mV
-        self.write(f"VOUT {value:.1f}")
+    def set_current(self, current):
+        """Sets the output current."""
+        self.write(f"SETI {current}")
 
-    def reset(self):
-        """ Resets the instrument to its default state """
+    def get_current(self):
+        """Returns the output current setting."""
+        return float(self.ask("SETI?"))
+
+    def set_ramp_rate(self, ramp_rate):
+        """Sets the output current ramp rate."""
+        self.write(f"RATE {ramp_rate}")
+
+    def get_ramp_rate(self):
+        """Returns the output current ramp rate."""
+        return float(self.ask("RATE?"))
+
+    def set_limits(self, max_current, max_ramp_rate):
+        """Sets the upper setting limits for output current, and output current ramp rate."""
+        self.write(f"LIMIT {max_current}, {max_ramp_rate}")
+
+    def get_limits(self):
+        """Returns the upper setting limits for output current, and output current ramp rate."""
+        return [float(element) for element in self.ask("LIMIT?").split(",")]
+
+    def set_ramp_segment(self, segment, current, ramp_rate):
+        """Sets the current and ramp rate of one of the ramp segments."""
+        self.write(f"RSEGS {segment}, {current}, {ramp_rate}")
+
+    def get_ramp_segment(self, segment):
+        """Returns the current and ramp rate of a specific ramp segment."""
+        return [float(x) for x in self.ask(f"RSEGS? {segment}").split(",")]
+
+    def set_ramp_segments_enable(self, state):
+        """Specifies if ramp segments are to be used."""
+        self.write(f"RSEG {int(state)}")
+
+    def get_ramp_segments_enable(self):
+        """Returns if ramp segments are to be used."""
+        return bool(int(self.ask("RSEG?")))
+
+    def get_measured_current(self):
+        """Returns actual measured output current."""
+        return float(self.ask("RDGI?"))
+
+    def get_measured_voltage(self):
+        """Returns actual output voltage measured at the power supply terminals."""
+        return float(self.ask("RDGV?"))
+
+    def stop_output_current_ramp(self):
+        """Stops the output current ramp."""
+        self.write("STOP")
+
+    def set_programming_mode(self, mode):
+        """Sets the current programming mode of the instrument."""
+        self.write(f"XPGM {mode}")
+
+    def get_programming_mode(self):
+        """Returns the current programming mode of the instrument."""
+        return int(self.ask("XPGM?"))
+
+    def set_ieee_488(self, terminator, eoi_enable, address):
+        """Configures the IEEE-488 interface."""
+        self.write(f"IEEE {terminator},{eoi_enable},{address}")
+
+    def get_ieee_488(self):
+        """Returns IEEE-488 interface configuration."""
+        return [int(x) for x in self.ask("IEEE?").split(",")]
+
+    def set_ieee_interface_mode(self, mode):
+        """Sets the interface mode of the instrument."""
+        self.write(f"MODE {mode}")
+
+    def get_ieee_interface_mode(self):
+        """Returns the interface mode of the instrument."""
+        return int(self.ask("MODE?"))
+
+    def set_factory_defaults(self):
+        """Sets all configuration values to factory defaults and resets the instrument."""
+        self.write("DFLT 99")
+
+    def reset_instrument(self):
+        """Sets the controller parameters to power-up settings."""
         self.write("*RST")
 
-    def self_test(self):
-        """ Initiates a self-test and returns the result """
-        return self.ask("*TST?")
 
-    def ramp_current(self, start, end, rate):
-        """ Ramps the current from start to end at a specified rate in mA/s """
-        self.write(f"RAMP:START {start:.1f}")
-        self.write(f"RAMP:END {end:.1f}")
-        self.write(f"RAMP:RATE {rate:.3f}")
-        self.write("RAMP:INIT")
-
-    @property
-    def ramp_rate(self):
-        """ Gets the ramp rate in mA/s """
-        return self.ask("RAMP:RATE?")
-
-    @ramp_rate.setter
-    def ramp_rate(self, value):
-        """ Sets the ramp rate in mA/s """
-        value = strict_range(value, [0.1, 99999])  # 0.1 mA/s to 99.999 A/s
-        self.write(f"RAMP:RATE {value:.3f}")
-
-    def quench_protection(self):
-        """ Checks if quench protection is enabled """
-        return self.ask("QUENCH:PROT?")
-
-    def enable_quench_protection(self):
-        """ Enables quench protection """
-        self.write("QUENCH:PROT ON")
-
-    def disable_quench_protection(self):
-        """ Disables quench protection """
-        self.write("QUENCH:PROT OFF")
-
-    def read_status(self):
-        """ Reads the status of the instrument """
-        return self.ask("STATUS?")
-
-    def persistent_switch_heater_on(self):
-        """ Turns the persistent switch heater on """
-        self.write("PSH ON")
-
-    def persistent_switch_heater_off(self):
-        """ Turns the persistent switch heater off """
-        self.write("PSH OFF")
-
-# Example usage
-if __name__ == "__main__":
-    instrument = LakeShore625("GPIB::1")
-    print(instrument.id)
-    print(instrument.output_current)
-    instrument.output_current = 5000  # Set current to 5A
-    instrument.ramp_current(0, 5000, 50)  # Ramp current to 5A at 50 mA/s
-    print(instrument.read_status())
-    instrument.persistent_switch_heater_on()
-    instrument.persistent_switch_heater_off()
+# Create aliases using the product names
+Model643 = ElectromagnetPowerSupply
+Model648 = ElectromagnetPowerSupply

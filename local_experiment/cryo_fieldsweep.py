@@ -10,9 +10,11 @@ from time import sleep
 import numpy as np
 import matplotlib.pyplot as plt
 import logging
+
 # instrument imports
 from local_instrument.keithley2001 import Keithley2001
 from lakeshore import Model336
+from local_instrument.Lakeshore_LS625 import ElectromagnetPowerSupply
 
 # pymeasure imports for running the experiment
 from pymeasure.experiment import Procedure, Results, unique_filename
@@ -20,113 +22,209 @@ from pymeasure.experiment.parameters import FloatParameter
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 
-log = logging.getLogger('')
+log = logging.getLogger("")
 log.addHandler(logging.NullHandler())
 log.setLevel(logging.INFO)
-#main class Procedure that holds initiating code and executing code. will be used in results()
-class IVProcedure(Procedure):
+
+"""
+Update: measured_magnetic_field uses scpi RDGF? not SETF? Problem solved
+
+Note: (Ignore, problem solved)
+
+In this program you will see us using the set current command in order to set the field.
+This is because the ramp_rate is calculated in amps, and the ramp_rate tells us how long
+to wait until we reach our set point field.
+
+Lame, but what can you do :(. Write better SCPI commands T-T
+Conversion rate: 6.6472 Amps per Tesla of applied field.
+"""
+class CryoProcedure(Procedure):
+    """
+    Procedure class that contains all the code that communicates with the devices.
+    3 sections - Startup, Execute, Shutdown.
+    Outputs data to the GUI
+    """
+
     # Parameters for the experiment, saved in csv
     # note that we want to reach min(?)_temperature prior to any measurements
-    min_temperature = FloatParameter('Minimum temperature', units='K', default=10)
-    max_temperature = FloatParameter('Maximum temperature', units='K', default=15)
-    ramp_rate = FloatParameter('Temperature ramp rate', units='K/min', default=0.5)
-    resistance_range = FloatParameter('Resistance Range', units='Ohm', default=2000)
-    time_per_measurement = FloatParameter('Time per measurement', units='s', default=0.1) # measure every 0.1 seconds?
-    num_plc = FloatParameter('Number of power line cycles aka. measurement accurac (0.1/1/10)', default=1)
-    power_amp = FloatParameter('Amperage of heater', units='A', default=0.75)
+    set_temperature = FloatParameter("Set temperature", units="K", default=10)
+    start_field = FloatParameter("Start Field", units="T", default=0)
+    end_field = FloatParameter("End Field", units="T", default=0)
+    current_field_constant = FloatParameter("Constant to convert from field to current", units="A/T", default=6.6472)
+    resistance_range = FloatParameter("Resistance Range", units="Ohm", default=2000)
+    time_per_measurement = FloatParameter(
+        "Time per measurement", units="s", default=0.1
+    )  # measure every 0.1 seconds?
+    num_plc = FloatParameter(
+        "Number of power line cycles aka. measurement accurac (0.1/1/10)", default=1
+    )
+    power_amp = FloatParameter("Amperage of heater", units="A", default=0.75)
 
-    DATA_COLUMNS = ['Temperature (K)', 'Resistance (ohm)']
-    
+    # These are the data values that will be measured/collected in the experiment
+    DATA_COLUMNS = ["Temperature (K)", "Resistance (ohm)", "Magnetic Field (T)"]
+
     def startup(self):
+        """
+        Necessary startup actions (Connecting and configuring to devices).
+        """
         # Initialize the instruments, see resources.ipynb
-        self.meter = Keithley2001('GPIB::12') 
-        self.tctrl = Model336(com_port='COM4') #COM 4 - this is the one that controls sample, magnet, and radiation
+        self.meter = Keithley2001("GPIB::12")
+        self.tctrl = Model336(
+            com_port="COM4"
+        )  # COM 4 - this is the one that controls sample, magnet, and radiation
+        self.magnet = ElectromagnetPowerSupply("GPIB0::11::INSTR")
+        self.tctrl.reset_instrument()
         self.meter.reset()
+        self.magnet.set_magnetic_field(0)
         # Configure the Keithley2001
         self.meter.measure_resistance()
         self.meter.resistance_range = self.resistance_range
-        # nplc (number power line cycles) controls how fast the measurement takes. 
+        # nplc (number power line cycles) controls how fast the measurement takes.
         # The faster the measurement, the less integration cycles --> less accurate.
         self.meter.resistance_nplc = self.num_plc
 
         # Configure LS336 and stabilize at min_temperature
-        self.tctrl.set_heater_pid(1, 100, 50, 0) # intended for low setting, may need to adjust for high
+        self.tctrl.set_heater_pid(
+            1, 50, 50, 20
+        )  # intended for low setting, may need to adjust for high
         # .set_heater_setup Heater 1 @ 50 Ohm, 1 Amp
-        self.tctrl.set_heater_setup(1, self.tctrl.HeaterResistance.HEATER_50_OHM, self.power_amp, self.tctrl.HeaterOutputUnits.POWER)
+        self.tctrl.set_heater_setup(
+            1,
+            self.tctrl.HeaterResistance.HEATER_50_OHM,
+            self.power_amp,
+            self.tctrl.HeaterOutputUnits.POWER,
+        )
         # .set_heater_output_mode Heater 1 @ closed loop mode, CHANNEL_A for sample stage, True - Remains on after power cycle (?)
-        self.tctrl.set_heater_output_mode(1, self.tctrl.HeaterOutputMode.CLOSED_LOOP, self.tctrl.InputChannel.CHANNEL_A, True)
+        self.tctrl.set_heater_output_mode(
+            1,
+            self.tctrl.HeaterOutputMode.CLOSED_LOOP,
+            self.tctrl.InputChannel.CHANNEL_A,
+            True,
+        )
         # setpoint to min temperature and wait until stabilize
-        self.tctrl.set_control_setpoint(1, self.min_temperature)
-        self.tctrl.set_heater_range(1, self.tctrl.HeaterRange.HIGH)
+        self.tctrl.set_control_setpoint(1, self.set_temperature)
+        self.tctrl.set_heater_range(1, self.tctrl.HeaterRange.MEDIUM)
+
+        # set ramp rate of magnet at 0.1A/s
+        self.magnet.set_ramp_rate(0.1)
+
+        # heat sample stage to set temperature
         while True:
-            if abs(self.tctrl.get_all_kelvin_reading()[0] - self.min_temperature) < 0.1:
-                log.info("Temperature reached, sleeping 10 seconds for stablization.")
+            if abs(self.tctrl.get_all_kelvin_reading()[0] - self.set_temperature) < 0.01:
+                log.info("Temperature reached, sleeping 15 seconds for stablization.")
                 break
             else:
-                log.info("Current temeprature: " + str(self.tctrl.get_all_kelvin_reading()[0]))
+                log.info(f"Current temeprature: {self.tctrl.get_all_kelvin_reading()[0]}")
                 sleep(1)
-        # Let sample stay at min_temperature for 10 seconds to stabilize
-        sleep(10)
+        # Let sample stay at min_temperature for 15 seconds to stabilize
+        sleep(15)
+        
+        # Check that temperature of the magnet is cold enough, otherwise shut off experiment
+        if self.tctrl.get_all_kelvin_reading()[1] > 5.3:
+            log.warning("Catch stop command in procedure. Magnet overheated")
+            self.meter.reset()
+            self.tctrl.all_heaters_off()
+            self.magnet.set_current(0)
+            sys.exit()
+        else:
+            log.info(f"Magnet cooled at temperature {self.tctrl.get_all_kelvin_reading()[1]} K")
+            log.info(f"Starting field at {self.start_field} T")
+            self.magnet.set_magnetic_field(self.start_field)
+            while True:
+                if abs(self.magnet.measured_magnetic_field() - self.start_field) < 0.005:
+                    log.info("Start field reached, sleeping 15 seconds for stablization.")
+                    break
+                else:
+                    log.info(f"Current field:{self.magnet.measured_magnetic_field()}")
+                    sleep(1)
+        sleep(15)
+        log.info(f"Magnetic field at {self.magnet.measured_magnetic_field()} T")
 
-
-    
     def execute(self):
+        """
+        Contains the 'experiment' of the procedure.
+        Basic requirements are emitting reslts self.emit() with the same data values defined in DATA_COLOUMS.
+        """
         log.info("Executing experiment.")
         # start ramping
-        self.tctrl.set_control_setpoint(1, self.max_temperature)
-        self.tctrl.set_heater_range(1, self.tctrl.HeaterRange.HIGH)
-        self.tctrl.set_setpoint_ramp_parameter(1, True, self.ramp_rate)
+        self.magnet.set_magnetic_field(self.end_field)
 
+        # main loop
         while True:
-            
-            sleep(self.time_per_measurement) # wait a minute, calm down, chill out.
-            resistance = float(self.meter.resistance[0].strip('NOHM'))  # Measure the resistance
-            log.info("Resistance measurement: " + str(resistance))
-            temperature = self.tctrl.get_all_kelvin_reading()[0] # index 0 for sample stage temperature
-            self.emit('results', {
-                'Temperature (K)': temperature,
-                'Resistance (ohm)': resistance
-            })
+
+            sleep(self.time_per_measurement)  # wait a minute, calm down, chill out.
+            resistance = float(
+                self.meter.resistance[0].strip("NOHM")
+            )  # Measure the resistance
+            log.info(f"Resistance measurement: {resistance}")
+            field = self.magnet.measured_magnetic_field()
+            self.emit(
+                "results",
+                {"Magnetic Field (T)": field, "Resistance (ohm)": resistance},
+            )
             # stop measuring once reached max temperature
-            if abs(self.tctrl.get_all_kelvin_reading()[0] - self.max_temperature) < 0.1:
+            if abs(self.magnet.measured_magnetic_field() - self.end_field) < 0.01:
                 break
 
             if self.should_stop():
                 log.warning("Catch stop command in procedure")
                 self.meter.reset()
                 self.tctrl.all_heaters_off()
+                self.magnet.set_magnetic_field(0)
                 break
 
         log.info("Experiment executed")
 
     def shutdown(self):
+        """
+        Shutdown all machines.
+        """
         log.info("Shutting down")
         self.meter.reset()
         self.tctrl.set_control_setpoint(1, 0)
         self.tctrl.all_heaters_off()
+        self.magnet.set_magnetic_field(0)
+
 
 class IVMeasurementWindow(ManagedWindow):
     def __init__(self):
         super().__init__(
-            procedure_class=IVProcedure,
-            inputs=['min_temperature', 'max_temperature', 'ramp_rate', 'resistance_range', 'time_per_measurement', 'num_plc', 'power_amp'],
-            displays=['min_temperature', 'max_temperature', 'ramp_rate', 'resistance_range', 'time_per_measurement', 'num_plc', 'power_amp'],
-            x_axis='Temperature (K)',
-            y_axis='Resistance (ohm)'
+            procedure_class=CryoProcedure,
+            inputs=[
+                "set_temperature",
+                "start_field",
+                "end_field",
+                "resistance_range",
+                "time_per_measurement",
+                "num_plc",
+                "power_amp",
+            ],
+            displays=[
+                "set_temperature",
+                "start_field",
+                "end_field",
+                "resistance_range",
+                "time_per_measurement",
+                "num_plc",
+                "power_amp",
+            ],
+            x_axis="Magnetic Field (T)",
+            y_axis="Resistance (ohm)",
         )
-        self.setWindowTitle('Temperature Sweep Measurement')
+        self.setWindowTitle("Field Sweep Measurement")
 
     def queue(self, procedure=None):
         directory = "./"  # Change this to the desired directory
-        filename = unique_filename(directory, prefix='T_SWEEP')
-        
+        filename = unique_filename(directory, prefix="B_SWEEP")
+
         procedure = self.make_procedure()
         results = Results(procedure, filename)
         experiment = self.new_experiment(results)
 
         self.manager.queue(experiment)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     window = IVMeasurementWindow()
     window.show()
