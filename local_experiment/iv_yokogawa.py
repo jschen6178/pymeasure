@@ -39,9 +39,15 @@ python iv_yokogawa.py
 import sys
 from time import sleep
 import numpy as np
+import sys
+import os
 
-from pymeasure.instruments.keithley import Keithley2000
-from pymeasure.instruments.yokogawa import Yokogawa7651
+current_directory = os.path.dirname(os.path.abspath(__file__))
+parent_directory = os.path.dirname(current_directory)
+sys.path.append(parent_directory)
+
+from local_instrument.Yokogawa_GS200 import YokogawaGS200
+from local_instrument.keithley2182 import Keithley2182
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 from pymeasure.experiment import (
@@ -55,40 +61,56 @@ log.addHandler(logging.NullHandler())
 
 class IVProcedure(Procedure):
 
-    max_current = FloatParameter('Maximum Current', units='mA', default=10)
-    min_current = FloatParameter('Minimum Current', units='mA', default=-10)
-    current_step = FloatParameter('Current Step', units='mA', default=0.1)
+    max_current = FloatParameter('Maximum Current', units='A', default=1e-3)
+    min_current = FloatParameter('Minimum Current', units='A', default=-1e-3)
+    current_step = FloatParameter('Current Step', units='A', default=1e-5)
     delay = FloatParameter('Delay Time', units='ms', default=20)
-    voltage_range = FloatParameter('Voltage Range', units='V', default=10)
+    
 
-    DATA_COLUMNS = ['Current (A)', 'Voltage (V)', 'Resistance (Ohm)']
+    DATA_COLUMNS = ['Current (A)', 'Voltage (V)', 'Resistance (ohm)']
 
     def startup(self):
         log.info("Setting up instruments")
-        self.meter = Keithley2000("GPIB::25")
-        self.meter.measure_voltage()
-        self.meter.voltage_range = self.voltage_range
-        self.meter.voltage_nplc = 1  # Integration constant to Medium
+        self.meter = Keithley2182("GPIB::7")
+        self.meter.reset()
+        
+        self.meter.active_channel = 1
+        self.meter.channel_function = "voltage"
+        self.meter.ch_1.setup_voltage(auto_range=True, nplc=5)
+        
+        self.source = YokogawaGS200("GPIB::3")
+        self.source.reset()
+        # Enable the source
+        self.source.source_enabled = True
 
-        self.source = Yokogawa7651("GPIB::4")
-        self.source.apply_current()
-        self.source.source_current_range = self.max_current * 1e-3  # A
-        self.source.complinance_voltage = self.voltage_range
-        self.source.enable_source()
+        # Set the source mode to 'current'
+        self.source.source_mode = 'current'
+
+        # Set the source range to an appropriate value
+        self.source.source_range = self.max_current*10
+
+        # Set the current limit (if needed, for safety)
+        self.source.current_limit = self.max_current*1.2
+
+        
+        
+        log.info("Set up complete!")
         sleep(1)
 
     def execute(self):
-        currents_up = np.arange(self.min_current, self.max_current, self.current_step)
+        currents_up = np.arange(0, self.max_current, self.current_step)
         currents_down = np.arange(self.max_current, self.min_current, -self.current_step)
-        currents = np.concatenate((currents_up, currents_down))  # Include the reverse
-        currents *= 1e-3  # to mA from A
+        currents_final = np.arange(self.min_current, 0, self.current_step)
+        currents = np.concatenate((currents_up, currents_down, currents_final))  # Include the reverse
+        
         steps = len(currents)
 
         log.info("Starting to sweep through current")
         for i, current in enumerate(currents):
-            log.debug("Measuring current: %g mA" % current)
-
-            self.source.source_current = current
+            log.debug("Measuring at current: %g mA" % current)
+            self.source.source_range = self.max_current*10
+            self.source.source_level = current
+            self.source.source_enabled = True
             # Or use self.source.ramp_to_current(current, delay=0.1)
             sleep(self.delay * 1e-3)
 
@@ -100,7 +122,7 @@ class IVProcedure(Procedure):
             data = {
                 'Current (A)': current,
                 'Voltage (V)': voltage,
-                'Resistance (Ohm)': resistance
+                'Resistance (ohm)': resistance
             }
             self.emit('results', data)
             self.emit('progress', 100. * i / steps)
@@ -120,11 +142,11 @@ class MainWindow(ManagedWindow):
             procedure_class=IVProcedure,
             inputs=[
                 'max_current', 'min_current', 'current_step',
-                'delay', 'voltage_range'
+                'delay',
             ],
             displays=[
                 'max_current', 'min_current', 'current_step',
-                'delay', 'voltage_range'
+                'delay', 
             ],
             x_axis='Current (A)',
             y_axis='Voltage (V)'
