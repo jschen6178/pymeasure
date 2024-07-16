@@ -35,10 +35,10 @@ class CryoProcedure(Procedure):
 
     # Parameters for the experiment, saved in csv
     # note that we want to reach min(?)_temperature prior to any measurements
-    min_temperature = FloatParameter("Minimum temperature", units="K", default=10)
-    max_temperature = FloatParameter("Maximum temperature", units="K", default=15)
+    min_temperature = FloatParameter("Minimum temperature", units="K", default=8)
+    max_temperature = FloatParameter("Maximum temperature", units="K", default=10)
     ramp_rate = FloatParameter("Temperature ramp rate", units="K/min", default=0.5)
-    resistance_range = FloatParameter("Resistance Range", units="Ohm", default=200000)
+    voltage_range = FloatParameter("Voltage Range", units="V", default=.200)
     time_per_measurement = FloatParameter(
         "Time per measurement", units="s", default=0.1
     )  # measure every 0.1 seconds?
@@ -51,7 +51,7 @@ class CryoProcedure(Procedure):
     power_amp = FloatParameter("Amperage of heater", units="A", default=1.414)
 
     # These are the data values that will be measured/collected in the experiment
-    DATA_COLUMNS = ["Temperature (K)", "Resistance (ohm)"]
+    DATA_COLUMNS = ["Temperature (K)", "Voltage (V)"]
 
     def startup(self):
         """
@@ -64,17 +64,17 @@ class CryoProcedure(Procedure):
         )  # COM 4 - this is the one that controls sample, magnet, and radiation
         self.meter.reset()
         # Configure the Keithley2001
-        self.meter.measure_resistance()
-        self.meter.resistance_range = self.resistance_range
+        self.meter.measure_voltage()
+        self.meter.voltage_range = self.voltage_range
         # nplc (number power line cycles) controls how fast the measurement takes.
         # The faster the measurement, the less integration cycles --> less accurate.
-        self.meter.resistance_nplc = self.num_plc
+        self.meter.voltage_nplc = self.num_plc
 
         # Configure LS336 and stabilize at min_temperature
         #######################################################################
         ### SEE MANUAL FOR SET UP. DO NOT MISMATCH HEATER AND INPUT CHANNEL ###
         #######################################################################
-
+        self.tctrl.reset_instrument()
         self.tctrl.set_heater_pid(
             2, 50, 50, 5
         )  # intended for low setting, may need to adjust for high
@@ -93,11 +93,12 @@ class CryoProcedure(Procedure):
             True,
         )
         # setpoint to min temperature and wait until stabilize
+        self.tctrl.set_setpoint_ramp_parameter(2, False, 0)
         self.tctrl.set_control_setpoint(2, self.min_temperature)
         self.tctrl.set_heater_range(2, self.tctrl.HeaterRange.LOW)
         while True:
             if abs(self.tctrl.get_all_kelvin_reading()[0] - self.min_temperature) < 0.1:
-                log.info("Temperature reached, sleeping 10 seconds for stablization.")
+                log.info("Temperature reached, sleeping 30 seconds for stablization.")
                 break
             else:
                 log.info(
@@ -115,24 +116,24 @@ class CryoProcedure(Procedure):
         """
         log.info("Executing experiment.")
         # start ramping
-        self.tctrl.set_control_setpoint(1, self.max_temperature)
-        self.tctrl.set_heater_range(1, self.tctrl.HeaterRange.LOW)
-        self.tctrl.set_setpoint_ramp_parameter(1, True, self.ramp_rate)
+        self.tctrl.set_control_setpoint(2, self.max_temperature)
+        self.tctrl.set_heater_range(2, self.tctrl.HeaterRange.LOW)
+        self.tctrl.set_setpoint_ramp_parameter(2, True, self.ramp_rate)
 
         # main loop
         while True:
 
             sleep(self.time_per_measurement)  # wait a minute, calm down, chill out.
-            resistance = float(
-                self.meter.resistance[0].strip("NOHM")
-            )  # Measure the resistance
-            log.info("Resistance measurement: " + str(resistance))
+            voltage = float(
+                self.meter.voltage[0].strip("NVDC")
+            )  # Measure the voltage
+            log.info("Voltage measurement: " + str(voltage))
             temperature = self.tctrl.get_all_kelvin_reading()[
                 0
             ]  # index 0 for sample stage temperature
             self.emit(
                 "results",
-                {"Temperature (K)": temperature, "Resistance (ohm)": resistance},
+                {"Temperature (K)": temperature, "Voltage (V)": voltage},
             )
             # stop measuring once reached max temperature
             if abs(self.tctrl.get_all_kelvin_reading()[0] - self.max_temperature) < 0.1:
@@ -142,6 +143,8 @@ class CryoProcedure(Procedure):
                 log.warning("Catch stop command in procedure")
                 self.meter.reset()
                 self.tctrl.all_heaters_off()
+                self.tctrl.set_setpoint_ramp_parameter(2,False,0)
+                self.tctrl.set_control_setpoint(2,0)
                 break
 
         log.info("Experiment executed")
@@ -152,8 +155,10 @@ class CryoProcedure(Procedure):
         """
         log.info("Shutting down")
         self.meter.reset()
-        self.tctrl.set_control_setpoint(1, 0)
+        self.tctrl.set_setpoint_ramp_parameter(2,False,0)
+        self.tctrl.set_control_setpoint(2, 0)
         self.tctrl.all_heaters_off()
+        self.tctrl.disconnect_usb()
         
 
 
@@ -165,7 +170,7 @@ class CryoMeasurementWindow(ManagedWindow):
                 "min_temperature",
                 "max_temperature",
                 "ramp_rate",
-                "resistance_range",
+                "voltage_range",
                 "time_per_measurement",
                 "num_plc",
                 "power_amp",
@@ -174,13 +179,13 @@ class CryoMeasurementWindow(ManagedWindow):
                 "min_temperature",
                 "max_temperature",
                 "ramp_rate",
-                "resistance_range",
+                "voltage_range",
                 "time_per_measurement",
                 "num_plc",
                 "power_amp",
             ],
             x_axis="Temperature (K)",
-            y_axis="Resistance (ohm)",
+            y_axis="Voltage (V)",
         )
         self.setWindowTitle("Temperature Sweep Measurement")
 
