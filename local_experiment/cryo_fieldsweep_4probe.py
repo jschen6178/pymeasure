@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import logging
 
 # instrument imports
-from local_instrument.keithley2001 import Keithley2001
+from local_instrument.keithley2182 import Keithley2182
+from local_instrument.Yokogawa_GS200 import YokogawaGS200
 from lakeshore import Model336
 from local_instrument.Lakeshore_LS625 import ElectromagnetPowerSupply
 
@@ -48,44 +49,55 @@ class CryoProcedure(Procedure):
     # Parameters for the experiment, saved in csv
     # note that we want to reach min(?)_temperature prior to any measurements
     set_temperature = FloatParameter("Set temperature", units="K", default=10)
-    start_field = FloatParameter("Start Field", units="T", default=0)
-    end_field = FloatParameter("End Field", units="T", default=0)
-    current_field_constant = FloatParameter("Constant to convert from field to current", units="A/T", default=6.6472)
-    voltage_range = FloatParameter("Voltage Range", units="V", default=.200)
+    set_current = FloatParameter("Set Current", units="A", default=3e-3)
+    max_field = FloatParameter("Max Field", units="T", default=0.5)
+    min_field = FloatParameter("Min Field", units="T", default=-0.5)
+    field_step = FloatParameter("Field Step", units="T", default=10e-3)
+    current_field_constant = FloatParameter("Constant to convert from field to current", units="A/T", default=6.6472*2)
+    magnet_ramp_rate = FloatParameter("Magnet Ramp Rate", units="A/s", default=0.1)
+    # voltage_range = FloatParameter("Voltage Range", units="V", default=.200)
     time_per_measurement = FloatParameter(
         "Time per measurement", units="s", default=0.1
     )  # measure every 0.1 seconds?
     num_plc = FloatParameter(
-        "Number of power line cycles aka. measurement accurac (0.1/1/10)", default=1
+        "Number of power line cycles aka. measurement accurac (0.1/1/10)", default=5
     )
     power_amp = FloatParameter("Amperage of heater", units="A", default=1.414)
 
     # These are the data values that will be measured/collected in the experiment
-    DATA_COLUMNS = ["Temperature (K)", "Voltage (V)", "Magnetic Field (T)"]
+    DATA_COLUMNS = ["Resistance (ohm)", "Voltage (V)", "Magnetic Field (T)"]
 
     def startup(self):
         """
         Necessary startup actions (Connecting and configuring to devices).
         """
         # Initialize the instruments, see resources.ipynb
-        self.meter = Keithley2001("GPIB::12")
+        self.meter = Keithley2182("GPIB::7")
+        self.source = YokogawaGS200("GPIB::3")
         self.tctrl = Model336(
             com_port="COM4"
         )  # COM 4 - this is the one that controls sample, magnet, and radiation
         self.magnet = ElectromagnetPowerSupply("GPIB0::11::INSTR")
         self.tctrl.reset_instrument()
         self.meter.reset()
+        self.source.reset()
         self.magnet.set_magnetic_field(0)
         # Configure the Keithley2001
-        self.meter.measure_voltage()
-        self.meter.voltage_range = self.voltage_range
-        # nplc (number power line cycles) controls how fast the measurement takes.
-        # The faster the measurement, the less integration cycles --> less accurate.
-        self.meter.voltage_nplc = self.num_plc
+        self.meter.active_channel = 1
+        self.meter.channel_function = "voltage"
+        self.meter.ch_1.setup_voltage(auto_range=True, nplc=self.num_plc)
 
+        # Configure the YokogawaGS200
+        
+        self.source.source_mode = "current"
+        self.source.source_range = self.set_current
+        self.source.source_level = self.set_current
+        self.source.current_limit = self.set_current
+        self.source.source_enabled = True
+        
         # Configure LS336 and stabilize at min_temperature
         self.tctrl.set_heater_pid(
-            2, 50, 50, 5
+            2, 50, 50, 0
         )  # intended for low setting, may need to adjust for high
         # .set_heater_setup Heater 1 @ 50 Ohm, 1 Amp
         self.tctrl.set_heater_setup(
@@ -107,21 +119,23 @@ class CryoProcedure(Procedure):
         self.tctrl.set_heater_range(2, self.tctrl.HeaterRange.LOW)
 
         # set ramp rate of magnet at 0.1A/s
-        self.magnet.set_ramp_rate(0.1)
+        self.magnet.set_ramp_rate(self.magnet_ramp_rate)
 
         # heat sample stage to set temperature
         while True:
             if abs(self.tctrl.get_all_kelvin_reading()[0] - self.set_temperature) < 0.01:
-                log.info("Temperature reached, sleeping 15 seconds for stablization.")
+                log.info("Temperature reached, sleeping 30 seconds for stablization.")
                 break
             else:
                 log.info(f"Current temeprature: {self.tctrl.get_all_kelvin_reading()[0]}")
                 sleep(1)
-        # Let sample stay at min_temperature for 15 seconds to stabilize
-        sleep(15)
+        # Let sample stay at min_temperature for 30 seconds to stabilize
+        voltage=self.meter.voltage
+        log.info(f"Voltage: {voltage}")
+        sleep(30)
         
         # Check that temperature of the magnet is cold enough, otherwise shut off experiment
-        if self.tctrl.get_all_kelvin_reading()[1] > 5.3:
+        if self.tctrl.get_all_kelvin_reading()[1] > 5.1:
             log.warning("Catch stop command in procedure. Magnet overheated")
             self.meter.reset()
             self.tctrl.all_heaters_off()
@@ -129,43 +143,35 @@ class CryoProcedure(Procedure):
             sys.exit()
         else:
             log.info(f"Magnet cooled at temperature {self.tctrl.get_all_kelvin_reading()[1]} K")
-            log.info(f"Starting field at {self.start_field} T")
-            self.magnet.set_magnetic_field(self.start_field)
-            while True:
-                if abs(self.magnet.measured_magnetic_field() - self.start_field) < 0.005:
-                    log.info("Start field reached, sleeping 15 seconds for stablization.")
-                    break
-                else:
-                    log.info(f"Current field:{self.magnet.measured_magnetic_field()}")
-                    sleep(1)
-        sleep(15)
-        log.info(f"Magnetic field at {self.magnet.measured_magnetic_field()} T")
+            
+            
 
     def execute(self):
         """
         Contains the 'experiment' of the procedure.
         Basic requirements are emitting reslts self.emit() with the same data values defined in DATA_COLOUMS.
         """
+        fields_up = np.arange(0, self.max_field, self.field_step)
+        fields_down = np.arange(self.max_field, self.min_field, -self.field_step)
+        fields_final = np.arange(self.min_field, 0, self.field_step)
+        fields = np.concatenate((fields_up, fields_down, fields_final))  # Include the reverse
         log.info("Executing experiment.")
         # start ramping
-        self.magnet.set_magnetic_field(self.end_field)
+        
 
         # main loop
-        while True:
-
-            sleep(self.time_per_measurement)  # wait a minute, calm down, chill out.
-            voltage = float(
-                self.meter.voltage[0].strip("NVDC")
-            )  # Measure the voltage
+        for field in fields:
+            self.magnet.set_magnetic_field(field)
+            sleep(self.field_step * self.current_field_constant / self.magnet.get_ramp_rate()*3) # wait a minute, calm down, chill out.
+            voltage = self.meter.voltage  # Measure the voltage
             log.info(f"Voltage measurement: {voltage}")
             field = self.magnet.measured_magnetic_field()
+            resistance = voltage/self.set_current
             self.emit(
                 "results",
-                {"Magnetic Field (T)": field, "Voltage (V)": voltage},
+                {"Magnetic Field (T)": field, "Voltage (V)": voltage, "Resistance (ohm)": resistance},
             )
-            # stop measuring once reached max temperature
-            if abs(self.magnet.measured_magnetic_field() - self.end_field) < 0.01:
-                break
+            sleep(20e-3)
 
             if self.should_stop():
                 log.warning("Catch stop command in procedure")
@@ -182,6 +188,7 @@ class CryoProcedure(Procedure):
         """
         log.info("Shutting down")
         self.meter.reset()
+        self.source.shutdown()
         self.tctrl.set_control_setpoint(2, 0)
         self.tctrl.all_heaters_off()
         self.magnet.set_magnetic_field(0)
@@ -195,21 +202,21 @@ class IVMeasurementWindow(ManagedWindow):
             procedure_class=CryoProcedure,
             inputs=[
                 "set_temperature",
-                "start_field",
-                "end_field",
-                "voltage_range",
-                "time_per_measurement",
+                "set_current",
+                "min_field",
+                "max_field",
+                "field_step",
                 "num_plc",
-                "power_amp",
+
             ],
             displays=[
                 "set_temperature",
-                "start_field",
-                "end_field",
-                "voltage_range",
-                "time_per_measurement",
+                "set_current",
+                "min_field",
+                "max_field",
+                "field_step",
                 "num_plc",
-                "power_amp",
+
             ],
             x_axis="Magnetic Field (T)",
             y_axis="Voltage (V)",

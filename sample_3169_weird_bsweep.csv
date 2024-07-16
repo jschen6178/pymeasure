@@ -1,0 +1,47 @@
+#Procedure: <__main__.CryoProcedure>
+#Parameters:
+#	Constant to convert from field to current: 13.2944 A/T
+#	Field Step: 0.02 T
+#	Magnet Ramp Rate: 0.1 A/s
+#	Max Field: 1 T
+#	Min Field: -1 T
+#	Number of power line cycles aka. measurement accurac (0.1/1/10): 5
+#	Amperage of heater: 1.414 A
+#	Set Current: 0.003 A
+#	Set temperature: 10 K
+#	Time per measurement: 0.1 s
+#Data:
+Temperature (K),Voltage (V),Magnetic Field (T)
+nan,0.113324229,0.0001
+nan,0.151790513,0.02009
+nan,0.151890755,0.0401
+nan,0.152005469,0.06012
+nan,0.152114243,0.08009
+nan,0.152226114,0.10013
+nan,0.15221378,0.12013
+nan,0.152756299,0.1401
+nan,0.152806835,0.1601
+nan,0.152462428,0.18014
+nan,0.152588898,0.20015
+nan,0.152778706,0.22013
+nan,0.153136668,0.24011
+nan,0.152981192,0.26014
+nan,0.152995867,0.28011
+nan,0.153197255,0.30014
+nan,0.153386133,0.32011
+nan,0.153481671,0.34016
+nan,0.153661262,0.36014
+nan,0.154024438,0.38015
+nan,0.154079878,0.40015
+nan,0.154348236,0.42015
+nan,0.155031242,0.44016
+nan,0.153140048,0.46017
+nan,0.152949375,0.48016
+nan,0.153231314,0.50014
+nan,0.153356811,0.52015
+nan,0.153333903,0.54016
+nan,0.153593548,0.56012
+nan,0.154299287,0.58016
+nan,0.155208902,0.60016
+nan,0.155329023,0.62019
+nan,0.155001347,0.64014
