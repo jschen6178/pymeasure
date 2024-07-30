@@ -41,7 +41,7 @@ from time import sleep
 import numpy as np
 import sys
 import os
-
+from datetime import date
 current_directory = os.path.dirname(os.path.abspath(__file__))
 parent_directory = os.path.dirname(current_directory)
 sys.path.append(parent_directory)
@@ -63,9 +63,9 @@ class IVProcedure(Procedure):
 
     max_current = FloatParameter('Maximum Current', units='A', default=1e-3)
     min_current = FloatParameter('Minimum Current', units='A', default=-1e-3)
-    current_step = FloatParameter('Current Step', units='A', default=1e-5)
+    current_step = FloatParameter('Current Step', units='A', default=2e-5)
     delay = FloatParameter('Delay Time', units='ms', default=20)
-    
+    sample = "YBCO1"
 
     DATA_COLUMNS = ['Current (A)', 'Voltage (V)', 'Resistance (ohm)']
 
@@ -76,8 +76,9 @@ class IVProcedure(Procedure):
         
         self.meter.active_channel = 1
         self.meter.channel_function = "voltage"
-        self.meter.ch_1.setup_voltage(auto_range=True, nplc=5)
         
+        self.meter.ch_1.setup_voltage(auto_range=True, nplc=5)
+        # self.meter.select_input_terminal()#"FRONT") 
         self.source = YokogawaGS200("GPIB::3")
         self.source.reset()
         # Enable the source
@@ -131,7 +132,8 @@ class IVProcedure(Procedure):
                 break
 
     def shutdown(self):
-        self.source.shutdown()
+        # self.source.shutdown()
+        self.source.source_enabled = False
         log.info("Finished")
 
 
@@ -155,7 +157,7 @@ class MainWindow(ManagedWindow):
 
     def queue(self):
         directory = "./"  # Change this to the desired directory
-        filename = unique_filename(directory, prefix='IV')
+        filename = unique_filename(directory, prefix="IV")
 
         procedure = self.make_procedure()
         results = Results(procedure, filename)
