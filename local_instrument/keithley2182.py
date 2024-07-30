@@ -349,6 +349,15 @@ class Keithley2182(SCPIMixin, KeithleyBuffer, Instrument):
     ###########
     # Methods #
     ###########
+    def select_input_terminal(self, terminal="FRONT"):
+        """Select the input terminal for measurement.
+
+        :param terminal: 'FRONT' or 'REAR'
+        """
+        valid_terminals = ["REAR","FRONT"]
+        if terminal.upper() not in valid_terminals:
+            raise ValueError(f"Invalid terminal selection: {terminal}. Valid options are 'FRONT' or 'REAR'.")
+        self.write(f":ROUT:TERM {terminal.upper()}")
 
     def auto_line_frequency(self):
         """Set appropriate limits for NPLC voltage and temperature readings."""

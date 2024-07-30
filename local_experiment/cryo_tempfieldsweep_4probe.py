@@ -1,3 +1,10 @@
+"""
+This procedure steps across set fields and runs a temperature sweep to find:
+Critical temperature as a function of applied field
+
+Justin 30/7/2024
+"""
+
 import sys
 import os
 
@@ -15,10 +22,11 @@ import logging
 from local_instrument.keithley2182 import Keithley2182
 from lakeshore import Model336
 from local_instrument.Yokogawa_GS200 import YokogawaGS200
+from local_instrument.Lakeshore_LS625 import ElectromagnetPowerSupply
 
 # pymeasure imports for running the experiment
 from pymeasure.experiment import Procedure, Results, unique_filename
-from pymeasure.experiment.parameters import FloatParameter
+from pymeasure.experiment.parameters import FloatParameter, Parameter, ListParameter
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 
@@ -36,12 +44,26 @@ class CryoProcedure(Procedure):
 
     # Parameters for the experiment, saved in csv
     # note that we want to reach min(?)_temperature prior to any measurements
-    sample_number = 3165
-    min_temperature = FloatParameter("Minimum temperature", units="K", default=8)
-    max_temperature = FloatParameter("Maximum temperature", units="K", default=10)
-    ramp_rate = FloatParameter("Temperature ramp rate", units="K/min", default=0.5)
-    #voltage_range = FloatParameter("Voltage Range", units="V", default=.200)
+    sample_name = Parameter("Sample name", default="DefaultSample")
+    min_temperature = FloatParameter("Minimum temperature", units="K", default=9)
+    max_temperature = FloatParameter("Maximum temperature", units="K", default=12)
+    ramp_rate = FloatParameter("Temperature ramp rate", units="K/min", default=1)
+    # voltage_range = FloatParameter("Voltage Range", units="V", default=.200)
     # voltmeter set to auto range works well
+    max_field = FloatParameter("Max Field", units="T", default=1)
+    min_field = FloatParameter("Min Field", units="T", default=-1)
+    field_step = FloatParameter("Field Step", units="T", default=1e-1)
+    current_field_constant = FloatParameter(
+        "Constant to convert from field to current", units="A/T", default=6.6472 * 2
+    )
+    fields_up = np.arange(0, max_field.value, field_step.value)
+    fields_down = np.arange(max_field.value, min_field.value, field_step.value)
+    fields_final = np.arange(min_field.value, 0, field_step.value)
+    fields = np.concatenate(
+        (fields_up, fields_down, fields_final)
+    )  # Include the reverse
+    field = FloatParameter("Current field", units="T", default=0)
+
 
     time_per_measurement = FloatParameter(
         "Time per measurement", units="s", default=0.1
@@ -49,7 +71,7 @@ class CryoProcedure(Procedure):
     num_plc = FloatParameter(
         "Number of power line cycles aka. measurement accurac (0.1/1/10)", default=5
     )
-    set_current = FloatParameter('Set current', units='A', default=1e-3)
+    set_current = FloatParameter("Set current", units="A", default=1e-4)
     #############################################################
     ### DO NOT CHANGE THIS UNLESS YOU KNOW WHAT YOU ARE DOING ###
     #############################################################
@@ -68,7 +90,8 @@ class CryoProcedure(Procedure):
         self.source.reset()
         self.tctrl = Model336(
             com_port="COM4"
-        )  # COM 4 - this is the one that controls sample, magnet, and radiation
+        )  # COM 4 - this is the one that controls sample, magnet, and radiation\
+        self.magnet = ElectromagnetPowerSupply("GPIB0::11::INSTR")
         self.meter.reset()
         ### Configure the Keithley2182
         self.meter.active_channel = 1
@@ -76,9 +99,9 @@ class CryoProcedure(Procedure):
         self.meter.ch_1.setup_voltage(auto_range=True, nplc=self.num_plc)
         # nplc (number power line cycles) controls how fast the measurement takes.
         # The faster the measurement, the less integration cycles --> less accurate.
-        
+
         ### Current source YokogawaGS300 setup
-       
+
         self.source.source_mode = "current"
         self.source.source_range = self.set_current
         self.source.current_limit = self.set_current
@@ -112,7 +135,7 @@ class CryoProcedure(Procedure):
         self.tctrl.set_heater_range(2, self.tctrl.HeaterRange.LOW)
         while True:
             if abs(self.tctrl.get_all_kelvin_reading()[0] - self.min_temperature) < 0.1:
-                log.info("Temperature reached, sleeping 30 seconds for stablization.")
+                log.info("Temperature reached, sleeping 10 seconds for stablization.")
                 break
             else:
                 log.info(
@@ -121,7 +144,10 @@ class CryoProcedure(Procedure):
                 )
                 sleep(1)
         # Let sample stay at min_temperature for 30 seconds to stabilize
-        sleep(30)
+        sleep(10)
+        self.magnet.set_magnetic_field(self.field)
+        sleep(self.field_step * self.current_field_constant / self.magnet.get_ramp_rate()*3)
+        log.info(f"Magnet field set: {self.field}")
 
     def execute(self):
         """
@@ -130,7 +156,7 @@ class CryoProcedure(Procedure):
         """
         log.info("Executing experiment.")
         # start ramping
-        
+
         self.tctrl.set_heater_range(2, self.tctrl.HeaterRange.LOW)
         self.tctrl.set_setpoint_ramp_parameter(2, True, self.ramp_rate)
         self.tctrl.set_control_setpoint(2, self.max_temperature)
@@ -138,7 +164,7 @@ class CryoProcedure(Procedure):
         while True:
 
             sleep(self.time_per_measurement)  # wait a minute, calm down, chill out.
-            voltage = self.meter.voltage # Measure the voltage
+            voltage = self.meter.voltage  # Measure the voltage
             log.info("Voltage measurement: " + str(voltage))
             temperature = self.tctrl.get_all_kelvin_reading()[
                 0
@@ -146,7 +172,11 @@ class CryoProcedure(Procedure):
             resistance = voltage / self.set_current
             self.emit(
                 "results",
-                {"Temperature (K)": temperature, "Voltage (V)": voltage, "Resistance (ohm)": resistance},
+                {
+                    "Temperature (K)": temperature,
+                    "Voltage (V)": voltage,
+                    "Resistance (ohm)": resistance,
+                },
             )
             # stop measuring once reached max temperature
             if abs(self.tctrl.get_all_kelvin_reading()[0] - self.max_temperature) < 0.1:
@@ -156,8 +186,8 @@ class CryoProcedure(Procedure):
                 log.warning("Catch stop command in procedure")
                 self.meter.reset()
                 self.tctrl.all_heaters_off()
-                self.tctrl.set_setpoint_ramp_parameter(2,False,0)
-                self.tctrl.set_control_setpoint(2,0)
+                self.tctrl.set_setpoint_ramp_parameter(2, False, 0)
+                self.tctrl.set_control_setpoint(2, 0)
                 break
 
         log.info("Experiment executed")
@@ -169,11 +199,10 @@ class CryoProcedure(Procedure):
         log.info("Shutting down")
         self.meter.reset()
         self.source.shutdown()
-        self.tctrl.set_setpoint_ramp_parameter(2,False,0)
+        self.tctrl.set_setpoint_ramp_parameter(2, False, 0)
         self.tctrl.set_control_setpoint(2, 0)
         self.tctrl.all_heaters_off()
         self.tctrl.disconnect_usb()
-        
 
 
 class CryoMeasurementWindow(ManagedWindow):
@@ -181,6 +210,10 @@ class CryoMeasurementWindow(ManagedWindow):
         super().__init__(
             procedure_class=CryoProcedure,
             inputs=[
+                "sample_name",
+                "min_field",
+                "max_field",
+                "field_step",
                 "min_temperature",
                 "max_temperature",
                 "ramp_rate",
@@ -189,6 +222,10 @@ class CryoMeasurementWindow(ManagedWindow):
                 "num_plc",
             ],
             displays=[
+                "sample_name",
+                "min_field",
+                "max_field",
+                "field_step",
                 "min_temperature",
                 "max_temperature",
                 "ramp_rate",
@@ -202,14 +239,22 @@ class CryoMeasurementWindow(ManagedWindow):
         self.setWindowTitle("4-Probe Resistance Temperature Sweep Measurement")
 
     def queue(self, procedure=None):
-        directory = "./"  # Change this to the desired directory
-        filename = unique_filename(directory, prefix=f"sample_{CryoProcedure.sample_number}_{CryoProcedure.min_temperature}_{CryoProcedure.max_temperature}_4probe_{CryoProcedure.set_current}")
-
         procedure = self.make_procedure()
-        results = Results(procedure, filename)
-        experiment = self.new_experiment(results)
+        fields = procedure.fields
 
-        self.manager.queue(experiment)
+        for field in fields:
+            # Set the field parameter to the current value
+            procedure = self.make_procedure()
+            procedure.field = field
+            directory = os.path.join(os.path.dirname(__file__), "Results", f"{procedure.sample_name}")  # Change this to the desired directory
+            filename = unique_filename(
+                directory,
+                prefix=f"sample_{procedure.sample_name}_field_{round(field, 3)}T_{procedure.min_temperature}_{procedure.max_temperature}_4probe_{procedure.set_current}",
+            )
+
+            results = Results(procedure, filename)
+            experiment = self.new_experiment(results)
+            self.manager.queue(experiment)
 
 
 if __name__ == "__main__":
