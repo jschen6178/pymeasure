@@ -19,7 +19,7 @@ from local_instrument.Lakeshore_LS625 import ElectromagnetPowerSupply
 
 # pymeasure imports for running the experiment
 from pymeasure.experiment import Procedure, Results, unique_filename
-from pymeasure.experiment.parameters import FloatParameter
+from pymeasure.experiment.parameters import FloatParameter, Parameter
 from pymeasure.display.Qt import QtWidgets
 from pymeasure.display.windows import ManagedWindow
 
@@ -48,8 +48,9 @@ class CryoProcedure(Procedure):
 
     # Parameters for the experiment, saved in csv
     # note that we want to reach min(?)_temperature prior to any measurements
+    sample_name = Parameter("Sample name", default="DefaultSample")
     set_temperature = FloatParameter("Set temperature", units="K", default=10)
-    set_current = FloatParameter("Set Current", units="A", default=3e-3)
+    set_current = FloatParameter("Set Current", units="A", default=1e-4)
     max_field = FloatParameter("Max Field", units="T", default=0.5)
     min_field = FloatParameter("Min Field", units="T", default=-0.5)
     field_step = FloatParameter("Field Step", units="T", default=10e-3)
@@ -123,8 +124,8 @@ class CryoProcedure(Procedure):
 
         # heat sample stage to set temperature
         while True:
-            if abs(self.tctrl.get_all_kelvin_reading()[0] - self.set_temperature) < 0.01:
-                log.info("Temperature reached, sleeping 30 seconds for stablization.")
+            if abs(self.tctrl.get_all_kelvin_reading()[0] - self.set_temperature) < 0.05:
+                log.info("Temperature reached, sleeping 10 seconds for stablization.")
                 break
             else:
                 log.info(f"Current temeprature: {self.tctrl.get_all_kelvin_reading()[0]}")
@@ -132,7 +133,7 @@ class CryoProcedure(Procedure):
         # Let sample stay at min_temperature for 30 seconds to stabilize
         voltage=self.meter.voltage
         log.info(f"Voltage: {voltage}")
-        sleep(30)
+        sleep(10)
         
         # Check that temperature of the magnet is cold enough, otherwise shut off experiment
         if self.tctrl.get_all_kelvin_reading()[1] > 5.1:
@@ -162,7 +163,7 @@ class CryoProcedure(Procedure):
         # main loop
         for field in fields:
             self.magnet.set_magnetic_field(field)
-            sleep(self.field_step * self.current_field_constant / self.magnet.get_ramp_rate()*3) # wait a minute, calm down, chill out.
+            sleep(self.field_step * self.current_field_constant / self.magnet.get_ramp_rate()*5) # wait a minute, calm down, chill out.
             voltage = self.meter.voltage  # Measure the voltage
             log.info(f"Voltage measurement: {voltage}")
             field = self.magnet.measured_magnetic_field()
@@ -201,6 +202,7 @@ class IVMeasurementWindow(ManagedWindow):
         super().__init__(
             procedure_class=CryoProcedure,
             inputs=[
+                "sample_name",
                 "set_temperature",
                 "set_current",
                 "min_field",
@@ -210,6 +212,7 @@ class IVMeasurementWindow(ManagedWindow):
 
             ],
             displays=[
+                "sample_name",
                 "set_temperature",
                 "set_current",
                 "min_field",
@@ -224,10 +227,11 @@ class IVMeasurementWindow(ManagedWindow):
         self.setWindowTitle("Field Sweep Measurement")
 
     def queue(self, procedure=None):
-        directory = "./"  # Change this to the desired directory
-        filename = unique_filename(directory, prefix="B_SWEEP")
+        
 
         procedure = self.make_procedure()
+        directory = os.path.join(os.path.dirname(__file__), "Results", f"{procedure.sample_name}")
+        filename = unique_filename(directory, prefix=f"sample_{procedure.sample_name}_fieldsweep_{procedure.max_field}T_{procedure.set_temperature}K_4probe_{procedure.set_current}A")
         results = Results(procedure, filename)
         experiment = self.new_experiment(results)
 

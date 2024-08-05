@@ -56,12 +56,7 @@ class CryoProcedure(Procedure):
     current_field_constant = FloatParameter(
         "Constant to convert from field to current", units="A/T", default=6.6472 * 2
     )
-    fields_up = np.arange(0, max_field.value, field_step.value)
-    fields_down = np.arange(max_field.value, min_field.value, field_step.value)
-    fields_final = np.arange(min_field.value, 0, field_step.value)
-    fields = np.concatenate(
-        (fields_up, fields_down, fields_final)
-    )  # Include the reverse
+    
     field = FloatParameter("Current field", units="T", default=0)
 
 
@@ -146,7 +141,7 @@ class CryoProcedure(Procedure):
         # Let sample stay at min_temperature for 30 seconds to stabilize
         sleep(10)
         self.magnet.set_magnetic_field(self.field)
-        sleep(self.field_step * self.current_field_constant / self.magnet.get_ramp_rate()*3)
+        sleep(self.field_step * self.current_field_constant / self.magnet.get_ramp_rate()*2)
         log.info(f"Magnet field set: {self.field}")
 
     def execute(self):
@@ -240,8 +235,13 @@ class CryoMeasurementWindow(ManagedWindow):
 
     def queue(self, procedure=None):
         procedure = self.make_procedure()
-        fields = procedure.fields
-
+        
+        fields_up = np.arange(0, procedure.max_field, procedure.field_step)
+        fields_down = np.arange(procedure.max_field, procedure.min_field, procedure.field_step)
+        fields_final = np.arange(procedure.min_field, 0, procedure.field_step)
+        fields = np.concatenate(
+            (fields_up, fields_down, fields_final)
+        )  # Include the reverse
         for field in fields:
             # Set the field parameter to the current value
             procedure = self.make_procedure()

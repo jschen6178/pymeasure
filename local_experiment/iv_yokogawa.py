@@ -77,7 +77,7 @@ class IVProcedure(Procedure):
         self.meter.active_channel = 1
         self.meter.channel_function = "voltage"
         
-        self.meter.ch_1.setup_voltage(auto_range=True, nplc=5)
+        self.meter.ch_1.setup_voltage(auto_range=True, nplc=1)
         # self.meter.select_input_terminal()#"FRONT") 
         self.source = YokogawaGS200("GPIB::3")
         self.source.reset()
@@ -133,6 +133,7 @@ class IVProcedure(Procedure):
 
     def shutdown(self):
         # self.source.shutdown()
+        self.source.source_level = 0
         self.source.source_enabled = False
         log.info("Finished")
 
