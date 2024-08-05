@@ -1,0 +1,17 @@
+#Procedure: <__main__.CryoProcedure>
+#Parameters:
+#	Constant to convert from field to current: 13.2944 A/T
+#	Current field: -0.2 T
+#	Field Step: 0.05 T
+#	Max Field: 0.3 T
+#	Maximum temperature: 11 K
+#	Min Field: -0.3 T
+#	Minimum temperature: 8.6 K
+#	Number of power line cycles aka. measurement accurac (0.1/1/10): 5
+#	Amperage of heater: 1.414 A
+#	Temperature ramp rate: 1 K/min
+#	Sample name: 3168_full_hysteresis
+#	Set current: 0.0001 A
+#	Time per measurement: 0.1 s
+#Data:
+Temperature (K),Voltage (V),Resistance (ohm)
