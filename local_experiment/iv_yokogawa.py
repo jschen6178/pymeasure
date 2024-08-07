@@ -34,6 +34,10 @@ Run the program by changing to the directory containing this file and calling:
 
 python iv_yokogawa.py
 
+IF YOUR NANOVOLTMETER STOPS WORKING AND SHOWS PERIODIC NOISE,
+HIT THE DCV1 BUTTON A LOT AND MAYBE DCV2 BUTTOM SOME NUMBER OF TIMES.
+
+Good luck!
 """
 
 import sys
